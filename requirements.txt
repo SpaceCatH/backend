@@ -1,6 +1,6 @@
 fastapi
 uvicorn
-pydantic
 requests
 pandas
 numpy
+python-dotenv
