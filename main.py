@@ -616,4 +616,10 @@ def scan_sp100(
             detail="No valid strategy setups were found in the S&P 100 based on current market conditions.",
         )
 
-    return ScanResponse(candidates=candidates)
+    # Sort by score descending
+candidates.sort(key=lambda c: c.best_score, reverse=True)
+
+# Keep only the top 10
+top_candidates = candidates[:10]
+
+return ScanResponse(candidates=top_candidates)
