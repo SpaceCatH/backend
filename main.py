@@ -1,3 +1,4 @@
+from firebase_client import db
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
