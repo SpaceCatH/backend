@@ -125,6 +125,30 @@ def compute_position_size(investment_dollars: float, entry: float, stop_loss: fl
     return shares, risk_per_share, total_risk
 
 
+def compute_atr(candles: List[dict], period: int = 14) -> Optional[float]:
+    if len(candles) < period + 1:
+        return None
+
+    highs = [c["high"] for c in candles]
+    lows = [c["low"] for c in candles]
+    closes = [c["close"] for c in candles]
+
+    trs = []
+    for i in range(1, len(candles)):
+        high = highs[i]
+        low = lows[i]
+        prev_close = closes[i - 1]
+        tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+        trs.append(tr)
+
+    if len(trs) < period:
+        return None
+
+    recent_trs = trs[-period:]
+    atr = sum(recent_trs) / period
+    return atr
+
+
 # -----------------------------
 # Scoring helpers
 # -----------------------------
@@ -206,8 +230,33 @@ def compute_pullback_quality(candles: List[dict], ema_values: List[float]) -> fl
 
 
 # -----------------------------
-# Strategy implementations (with fresh-signal logic)
+# Strategy implementations (ATR-based stops + caps)
 # -----------------------------
+
+MAX_STOP_PCT = 0.10  # 10% max stop distance
+ATR_MULT_STOP = 1.5  # 1.5 * ATR for stop
+TP_R_MULT = 2.0      # 2R target
+
+
+def build_atr_stop_and_target(entry: float, atr: float) -> Optional[tuple]:
+    if atr is None or atr <= 0 or entry <= 0:
+        return None
+
+    raw_risk = ATR_MULT_STOP * atr
+    max_risk = entry * MAX_STOP_PCT
+    risk_per_share = min(raw_risk, max_risk)
+
+    if risk_per_share <= 0:
+        return None
+
+    stop_loss = entry - risk_per_share
+    take_profit = entry + TP_R_MULT * risk_per_share
+
+    if stop_loss <= 0:
+        return None
+
+    return stop_loss, take_profit, risk_per_share
+
 
 def simple_ema_breakout(candles, ema_values, investment_dollars):
     closes = [c["close"] for c in candles]
@@ -233,10 +282,12 @@ def simple_ema_breakout(candles, ema_values, investment_dollars):
     if abs(entry - current_price) / current_price > 0.05:
         return None
 
-    ema_at_entry = ema_values[found_idx]
-    stop_loss = ema_at_entry * 0.99
-    risk_per_share = entry - stop_loss
-    take_profit = entry + 2 * risk_per_share
+    atr = compute_atr(candles)
+    atr_result = build_atr_stop_and_target(entry, atr)
+    if atr_result is None:
+        return None
+
+    stop_loss, take_profit, risk_per_share = atr_result
 
     shares, rps, total_risk = compute_position_size(investment_dollars, entry, stop_loss)
     if shares <= 0:
@@ -250,7 +301,7 @@ def simple_ema_breakout(candles, ema_values, investment_dollars):
         shares=shares,
         risk_per_share=round(rps, 2),
         total_risk=round(total_risk, 2),
-        notes="Price closed above the 8 EMA after being below it."
+        notes="Price closed above the 8 EMA after being below it. Stop and target sized using ATR."
     )
 
 
@@ -286,12 +337,12 @@ def swing_high_breakout(candles, ema_values, investment_dollars):
     if abs(entry - current_price) / current_price > 0.05:
         return None
 
-    window_start = max(0, swing_high_idx - 5)
-    swing_low = min(lows[window_start:swing_high_idx + 1])
+    atr = compute_atr(candles)
+    atr_result = build_atr_stop_and_target(entry, atr)
+    if atr_result is None:
+        return None
 
-    stop_loss = swing_low * 0.99
-    risk_per_share = entry - stop_loss
-    take_profit = entry + 1.5 * risk_per_share
+    stop_loss, take_profit, risk_per_share = atr_result
 
     shares, rps, total_risk = compute_position_size(investment_dollars, entry, stop_loss)
     if shares <= 0:
@@ -305,7 +356,7 @@ def swing_high_breakout(candles, ema_values, investment_dollars):
         shares=shares,
         risk_per_share=round(rps, 2),
         total_risk=round(total_risk, 2),
-        notes="Breakout above a recent swing high while price is above the 8 EMA."
+        notes="Breakout above a recent swing high while price is above the 8 EMA. Stop and target sized using ATR."
     )
 
 
@@ -342,10 +393,12 @@ def retest_breakout(candles, ema_values, investment_dollars):
     if abs(entry - current_price) / current_price > 0.05:
         return None
 
-    ema_at_entry = ema_values[found_idx]
-    stop_loss = ema_at_entry * 0.99
-    risk_per_share = entry - stop_loss
-    take_profit = entry + 2 * risk_per_share
+    atr = compute_atr(candles)
+    atr_result = build_atr_stop_and_target(entry, atr)
+    if atr_result is None:
+        return None
+
+    stop_loss, take_profit, risk_per_share = atr_result
 
     shares, rps, total_risk = compute_position_size(investment_dollars, entry, stop_loss)
     if shares <= 0:
@@ -359,7 +412,7 @@ def retest_breakout(candles, ema_values, investment_dollars):
         shares=shares,
         risk_per_share=round(rps, 2),
         total_risk=round(total_risk, 2),
-        notes="Price pulled back to the 8 EMA and then bounced back above it."
+        notes="Price pulled back to the 8 EMA and then bounced back above it. Stop and target sized using ATR."
     )
 
 
@@ -369,9 +422,9 @@ def retest_breakout(candles, ema_values, investment_dollars):
 
 @app.get("/strategy", response_model=StrategyResponse)
 def get_strategy(
-    ticker: str = Query(...),
-    dollars: float = Query(..., gt=0),
-    type: str = Query("simple"),
+    ticker: str = Query(..., description="Stock ticker symbol, e.g., AAPL"),
+    dollars: float = Query(..., gt=0, description="Investment amount in dollars"),
+    type: str = Query("simple", description="Strategy type: simple, swing, retest, or all"),
 ):
     ticker_upper = ticker.upper()
     strategy_type = type.lower()
@@ -403,7 +456,6 @@ def get_strategy(
             detail="No valid strategy signals found for the given inputs.",
         )
 
-    # Scoring
     trend = compute_trend_strength(ema_values)
     vol = compute_volatility_compression(candles)
     pull = compute_pullback_quality(candles, ema_values)
