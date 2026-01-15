@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
 import requests
+import time
 from typing import List, Optional
 from math import floor
 from dotenv import load_dotenv
@@ -17,7 +18,7 @@ load_dotenv()
 app = FastAPI(
     title="8 EMA Swing Trading Strategy API",
     description="Generates entry/exit points for multiple EMA breakout strategies and scans the S&P 100.",
-    version="1.1.0",
+    version="1.2.0",
 )
 
 app.add_middleware(
@@ -49,6 +50,19 @@ SP100_TICKERS = [
     "SO", "SPG", "T", "TGT", "TMO", "TMUS", "TSLA", "TXN", "UNH", "UNP",
     "UPS", "USB", "V", "VZ", "WBA", "WFC", "WMT", "XOM"
 ]
+
+
+# -----------------------------
+# Firestore ticker normalization
+# -----------------------------
+
+def normalize_ticker(ticker: str) -> str:
+    """
+    Normalize ticker for Firestore document IDs.
+    Firestore does not allow '.' in document IDs, so we replace with '-'.
+    Example: BRK.B -> BRK-B
+    """
+    return ticker.replace(".", "-")
 
 
 # -----------------------------
@@ -540,20 +554,24 @@ def get_strategy(
 
 
 # -----------------------------
-# Scan endpoint (S&P 100)
+# Daily scan endpoint (for Cloud Scheduler)
 # -----------------------------
 
-@app.get("/scan", response_model=ScanResponse)
-def scan_sp100(
-    dollars: float = Query(10000, gt=0, description="Capital to hypothetically allocate per ticker for screening"),
-    type: str = Query("all", description="Strategy type to consider: simple, swing, retest, or all"),
+@app.post("/daily-scan")
+def daily_scan(
+    dollars: float = 10000,
+    type: str = "all",
 ):
+    """
+    Runs the full S&P 100 scan, computes strategies, and writes one Firestore document per ticker.
+    Intended to be triggered once per day by Cloud Scheduler.
+    """
     strategy_type = type.lower()
-    candidates: List[ScanCandidate] = []
 
-    for ticker in SP100_TICKERS:
+    for idx, ticker in enumerate(SP100_TICKERS):
+        ticker_upper = ticker.upper()
         try:
-            candles = fetch_eod_data(ticker)
+            candles = fetch_eod_data(ticker_upper)
             closes = [c["close"] for c in candles]
             ema_values = calculate_ema(closes, period=8)
 
@@ -577,14 +595,15 @@ def scan_sp100(
                     strategies.append(retest_res)
 
             if not strategies:
+                # If no valid strategies, remove any existing doc for this ticker
+                doc_id = normalize_ticker(ticker_upper)
+                db.collection("daily_scan").document(doc_id).delete()
                 continue
 
-            # compute context metrics once per ticker
             trend = compute_trend_strength(ema_values)
             vol = compute_volatility_compression(candles)
             pull = compute_pullback_quality(candles, ema_values)
 
-            # assign scores per strategy
             for s in strategies:
                 if s.strategy == "simple":
                     s.score = trend
@@ -593,35 +612,75 @@ def scan_sp100(
                 elif s.strategy == "retest":
                     s.score = trend + pull
 
-            # pick best strategy for this ticker
             best = max(strategies, key=lambda x: x.score)
 
-            candidates.append(
-                ScanCandidate(
-                    ticker=ticker,
-                    best_strategy=best.strategy,
-                    best_score=float(round(best.score, 2)),
-                    has_simple=simple_res is not None,
-                    has_swing=swing_res is not None,
-                    has_retest=retest_res is not None,
-                )
-            )
+            doc_id = normalize_ticker(ticker_upper)
+            db.collection("daily_scan").document(doc_id).set({
+                "ticker": ticker_upper,  # original ticker (e.g., BRK.B)
+                "best_strategy": best.strategy,
+                "best_score": float(round(best.score, 2)),
+                "has_simple": simple_res is not None,
+                "has_swing": swing_res is not None,
+                "has_retest": retest_res is not None,
+                "updated_at": int(time.time()),
+            })
 
         except HTTPException:
             continue
         except Exception:
             continue
 
+        # Respect Alpha Vantage free tier: 5 calls per minute
+        if (idx + 1) % 5 == 0 and (idx + 1) < len(SP100_TICKERS):
+            time.sleep(70)
+
+    return {"status": "completed"}
+
+
+# -----------------------------
+# Scan endpoint (reads from Firestore)
+# -----------------------------
+
+@app.get("/scan", response_model=ScanResponse)
+def scan_sp100():
+    """
+    Returns the most recent daily scan results from Firestore.
+    This is what the frontend should call for instant screener data.
+    """
+    docs = db.collection("daily_scan").stream()
+
+    candidates: List[ScanCandidate] = []
+    for doc in docs:
+        data = doc.to_dict() or {}
+
+        ticker = data.get("ticker")
+        best_strategy = data.get("best_strategy")
+        best_score = data.get("best_score")
+        has_simple = data.get("has_simple")
+        has_swing = data.get("has_swing")
+        has_retest = data.get("has_retest")
+
+        if not ticker or best_strategy is None or best_score is None:
+            continue
+
+        candidates.append(
+            ScanCandidate(
+                ticker=ticker,  # original ticker, e.g., BRK.B
+                best_strategy=best_strategy,
+                best_score=float(best_score),
+                has_simple=bool(has_simple),
+                has_swing=bool(has_swing),
+                has_retest=bool(has_retest),
+            )
+        )
+
     if not candidates:
         raise HTTPException(
             status_code=404,
-            detail="No valid strategy setups were found in the S&P 100 based on current market conditions.",
+            detail="No cached scan results found in Firestore. Has /daily-scan run yet?",
         )
 
-    # sort strictly by numeric score, highest first
     candidates.sort(key=lambda c: c.best_score, reverse=True)
-
-    # keep only top 10
     top_candidates = candidates[:10]
 
     return ScanResponse(candidates=top_candidates)
