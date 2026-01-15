@@ -6,7 +6,9 @@ import requests
 from typing import List, Optional
 from math import floor
 from dotenv import load_dotenv
+
 load_dotenv()
+
 # -----------------------------
 # FastAPI app setup
 # -----------------------------
@@ -44,6 +46,8 @@ class StrategyResult(BaseModel):
     risk_per_share: float
     total_risk: float
     notes: str
+    score: float = 0.0
+    is_recommended: bool = False
 
 
 class StrategyResponse(BaseModel):
@@ -142,6 +146,103 @@ def compute_position_size(investment_dollars: float, entry: float, stop_loss: fl
 
 
 # -----------------------------
+# Scoring helpers (for recommendation)
+# -----------------------------
+
+def compute_trend_strength(ema_values: List[float]) -> float:
+    """
+    Simple trend strength score based on EMA slope over the last 20 bars.
+    Returns a score between 0 and 3.
+    """
+    valid_ema = [e for e in ema_values if e is not None]
+    if len(valid_ema) < 20:
+        return 0.0
+
+    start = valid_ema[-20]
+    end = valid_ema[-1]
+    if start <= 0:
+        return 0.0
+
+    pct_change = (end - start) / start
+
+    if pct_change > 0.05:
+        return 3.0
+    elif pct_change > 0.02:
+        return 2.0
+    elif pct_change > 0.005:
+        return 1.0
+    else:
+        return 0.0
+
+
+def compute_volatility_compression(candles: List[dict]) -> float:
+    """
+    Simple volatility compression score based on ATR vs its recent average.
+    Returns a score between 0 and 2.
+    """
+    if len(candles) < 25:
+        return 0.0
+
+    highs = [c["high"] for c in candles]
+    lows = [c["low"] for c in candles]
+    closes = [c["close"] for c in candles]
+
+    trs = []
+    for i in range(1, len(candles)):
+        high = highs[i]
+        low = lows[i]
+        prev_close = closes[i - 1]
+        tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+        trs.append(tr)
+
+    if len(trs) < 20:
+        return 0.0
+
+    recent_trs = trs[-20:]
+    avg_atr = sum(recent_trs[:-1]) / (len(recent_trs) - 1)
+    current_atr = recent_trs[-1]
+
+    if avg_atr == 0:
+        return 0.0
+
+    ratio = current_atr / avg_atr
+
+    if ratio < 0.8:
+        return 2.0
+    elif ratio < 1.0:
+        return 1.0
+    else:
+        return 0.0
+
+
+def compute_pullback_quality(candles: List[dict], ema_values: List[float]) -> float:
+    """
+    Simple pullback quality score based on recent price action around the EMA.
+    Returns a score between 0 and 3.
+    """
+    closes = [c["close"] for c in candles]
+    if len(closes) < 3 or len(ema_values) < 3:
+        return 0.0
+
+    i = len(closes) - 1
+    if ema_values[i] is None or ema_values[i - 1] is None or ema_values[i - 2] is None:
+        return 0.0
+
+    above_two_ago = closes[i - 2] > ema_values[i - 2]
+    near_or_below_prev = closes[i - 1] <= ema_values[i - 1] * 1.01
+    bounce_now = closes[i] > ema_values[i]
+
+    if above_two_ago and near_or_below_prev and bounce_now:
+        return 3.0
+    elif above_two_ago and bounce_now:
+        return 2.0
+    elif bounce_now:
+        return 1.0
+    else:
+        return 0.0
+
+
+# -----------------------------
 # Strategy implementations
 # -----------------------------
 
@@ -156,7 +257,6 @@ def simple_ema_breakout(candles, ema_values, investment_dollars) -> Optional[Str
     closes = [c["close"] for c in candles]
 
     # Find the most recent bar where close crosses above EMA
-    idx = len(closes) - 1
     found_idx = None
     for i in range(len(closes) - 1, 0, -1):
         if ema_values[i] is None or ema_values[i - 1] is None:
@@ -171,7 +271,6 @@ def simple_ema_breakout(candles, ema_values, investment_dollars) -> Optional[Str
     entry = closes[found_idx]
     ema_at_entry = ema_values[found_idx]
     stop_loss = ema_at_entry * 0.99  # 1% below EMA as a simple buffer
-    # Risk per share:
     risk_per_share = entry - stop_loss
     take_profit = entry + 2 * risk_per_share
 
@@ -264,7 +363,6 @@ def retest_breakout(candles, ema_values, investment_dollars) -> Optional[Strateg
 
     closes = [c["close"] for c in candles]
 
-    idx = len(closes) - 1
     found_idx = None
     for i in range(len(closes) - 1, 1, -1):
         if ema_values[i] is None or ema_values[i - 1] is None or ema_values[i - 2] is None:
@@ -352,10 +450,24 @@ def get_strategy(
             detail="No valid strategy signals found for the given inputs. Try another ticker or date range.",
         )
 
+    # -----------------------------
+    # Recommendation logic
+    # -----------------------------
+    trend_score = compute_trend_strength(ema_values)
+    vol_score = compute_volatility_compression(candles)
+    pullback_score = compute_pullback_quality(candles, ema_values)
+
+    for s in strategies:
+        if s.strategy == "simple":
+            s.score = trend_score
+        elif s.strategy == "swing":
+            s.score = trend_score + vol_score
+        elif s.strategy == "retest":
+            s.score = trend_score + pullback_score
+
+    # Mark the highest-scoring strategy as recommended
+    best = max(strategies, key=lambda x: x.score)
+    for s in strategies:
+        s.is_recommended = (s is best)
+
     return StrategyResponse(strategies=strategies)
-
-
-# -----------------------------
-# For local / Replit run
-# -----------------------------
-
