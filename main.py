@@ -110,22 +110,6 @@ def calculate_ema(prices: List[float], period: int = 8) -> List[float]:
     return ema_values
 
 
-def compute_position_size(investment_dollars: float, entry: float, stop_loss: float):
-    if entry <= 0 or stop_loss <= 0:
-        return 0, 0.0, 0.0
-
-    risk_per_trade = investment_dollars * 0.01
-    risk_per_share = abs(entry - stop_loss)
-
-    if risk_per_share == 0:
-        return 0, 0.0, 0.0
-
-    shares = floor(risk_per_trade / risk_per_share)
-    total_risk = shares * risk_per_share
-
-    return shares, risk_per_share, total_risk
-
-
 def compute_atr(candles: List[dict], period: int = 14) -> Optional[float]:
     if len(candles) < period + 1:
         return None
@@ -299,11 +283,13 @@ def simple_ema_breakout(candles, ema_values, investment_dollars):
 
     stop_loss, take_profit, risk_per_share = atr_result
 
-    shares, rps, total_risk = compute_position_size(investment_dollars, entry, stop_loss)
+    # Capital-based position sizing
+    shares = floor(investment_dollars / entry)
     if shares <= 0:
         return None
 
-    total_profit = (take_profit - entry) * shares
+    total_risk = shares * risk_per_share
+    total_profit = shares * (take_profit - entry)
 
     return StrategyResult(
         strategy="simple",
@@ -311,7 +297,7 @@ def simple_ema_breakout(candles, ema_values, investment_dollars):
         stop_loss=round(stop_loss, 2),
         take_profit=round(take_profit, 2),
         shares=shares,
-        risk_per_share=round(rps, 2),
+        risk_per_share=round(risk_per_share, 2),
         total_risk=round(total_risk, 2),
         total_profit=round(total_profit, 2),
         notes="Price closed above the 8 EMA after being below it. Stop and target sized using ATR; R-multiple adapts to trend strength."
@@ -361,11 +347,13 @@ def swing_high_breakout(candles, ema_values, investment_dollars):
 
     stop_loss, take_profit, risk_per_share = atr_result
 
-    shares, rps, total_risk = compute_position_size(investment_dollars, entry, stop_loss)
+    # Capital-based position sizing
+    shares = floor(investment_dollars / entry)
     if shares <= 0:
         return None
 
-    total_profit = (take_profit - entry) * shares
+    total_risk = shares * risk_per_share
+    total_profit = shares * (take_profit - entry)
 
     return StrategyResult(
         strategy="swing",
@@ -373,7 +361,7 @@ def swing_high_breakout(candles, ema_values, investment_dollars):
         stop_loss=round(stop_loss, 2),
         take_profit=round(take_profit, 2),
         shares=shares,
-        risk_per_share=round(rps, 2),
+        risk_per_share=round(risk_per_share, 2),
         total_risk=round(total_risk, 2),
         total_profit=round(total_profit, 2),
         notes="Breakout above a recent swing high while price is above the 8 EMA. Stop and target sized using ATR; R-multiple adapts to volatility compression."
@@ -424,11 +412,13 @@ def retest_breakout(candles, ema_values, investment_dollars):
 
     stop_loss, take_profit, risk_per_share = atr_result
 
-    shares, rps, total_risk = compute_position_size(investment_dollars, entry, stop_loss)
+    # Capital-based position sizing
+    shares = floor(investment_dollars / entry)
     if shares <= 0:
         return None
 
-    total_profit = (take_profit - entry) * shares
+    total_risk = shares * risk_per_share
+    total_profit = shares * (take_profit - entry)
 
     return StrategyResult(
         strategy="retest",
@@ -436,7 +426,7 @@ def retest_breakout(candles, ema_values, investment_dollars):
         stop_loss=round(stop_loss, 2),
         take_profit=round(take_profit, 2),
         shares=shares,
-        risk_per_share=round(rps, 2),
+        risk_per_share=round(risk_per_share, 2),
         total_risk=round(total_risk, 2),
         total_profit=round(total_profit, 2),
         notes="Price pulled back to the 8 EMA and then bounced back above it. Stop and target sized using ATR; R-multiple adapts to pullback quality."
@@ -450,7 +440,7 @@ def retest_breakout(candles, ema_values, investment_dollars):
 @app.get("/strategy", response_model=StrategyResponse)
 def get_strategy(
     ticker: str = Query(..., description="Stock ticker symbol, e.g., AAPL"),
-    dollars: float = Query(..., gt=0, description="Investment amount in dollars"),
+    dollars: float = Query(..., gt=0, description="Capital to allocate to this trade in dollars"),
     type: str = Query("simple", description="Strategy type: simple, swing, retest, or all"),
 ):
     ticker_upper = ticker.upper()
