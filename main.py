@@ -211,8 +211,10 @@ def compute_volatility_compression(candles: List[dict]) -> float:
 
 def compute_pullback_quality(candles: List[dict], ema_values: List[float]) -> float:
     closes = [c["close"] for c in candles]
-    i = len(closes) - 1
+    if len(closes) < 3 or len(ema_values) < 3:
+        return 0.0
 
+    i = len(closes) - 1
     if ema_values[i] is None or ema_values[i - 1] is None or ema_values[i - 2] is None:
         return 0.0
 
@@ -230,15 +232,15 @@ def compute_pullback_quality(candles: List[dict], ema_values: List[float]) -> fl
 
 
 # -----------------------------
-# Strategy implementations (ATR-based stops + caps)
+# ATR-based stop/target config
 # -----------------------------
 
-MAX_STOP_PCT = 0.10  # 10% max stop distance
-ATR_MULT_STOP = 1.5  # 1.5 * ATR for stop
-TP_R_MULT = 2.0      # 2R target
+MAX_STOP_PCT = 0.10      # 10% max stop distance
+ATR_MULT_STOP = 1.5      # 1.5 * ATR for stop
+DEFAULT_R_MULT = 2.0     # base R multiple (2R)
 
 
-def build_atr_stop_and_target(entry: float, atr: float) -> Optional[tuple]:
+def build_atr_stop_and_target(entry: float, atr: float, r_mult: float) -> Optional[tuple]:
     if atr is None or atr <= 0 or entry <= 0:
         return None
 
@@ -250,13 +252,17 @@ def build_atr_stop_and_target(entry: float, atr: float) -> Optional[tuple]:
         return None
 
     stop_loss = entry - risk_per_share
-    take_profit = entry + TP_R_MULT * risk_per_share
+    take_profit = entry + r_mult * risk_per_share
 
     if stop_loss <= 0:
         return None
 
     return stop_loss, take_profit, risk_per_share
 
+
+# -----------------------------
+# Strategy implementations
+# -----------------------------
 
 def simple_ema_breakout(candles, ema_values, investment_dollars):
     closes = [c["close"] for c in candles]
@@ -282,8 +288,12 @@ def simple_ema_breakout(candles, ema_values, investment_dollars):
     if abs(entry - current_price) / current_price > 0.05:
         return None
 
+    # Adaptive R: Simple uses 3R in strong trends
+    trend = compute_trend_strength(ema_values)
+    r_mult = 3.0 if trend >= 2.0 else 2.0
+
     atr = compute_atr(candles)
-    atr_result = build_atr_stop_and_target(entry, atr)
+    atr_result = build_atr_stop_and_target(entry, atr, r_mult)
     if atr_result is None:
         return None
 
@@ -301,7 +311,7 @@ def simple_ema_breakout(candles, ema_values, investment_dollars):
         shares=shares,
         risk_per_share=round(rps, 2),
         total_risk=round(total_risk, 2),
-        notes="Price closed above the 8 EMA after being below it. Stop and target sized using ATR."
+        notes="Price closed above the 8 EMA after being below it. Stop and target sized using ATR; R-multiple adapts to trend strength."
     )
 
 
@@ -337,8 +347,12 @@ def swing_high_breakout(candles, ema_values, investment_dollars):
     if abs(entry - current_price) / current_price > 0.05:
         return None
 
+    # Adaptive R: Swing uses 3R when volatility is compressed
+    vol = compute_volatility_compression(candles)
+    r_mult = 3.0 if vol >= 1.0 else 2.0
+
     atr = compute_atr(candles)
-    atr_result = build_atr_stop_and_target(entry, atr)
+    atr_result = build_atr_stop_and_target(entry, atr, r_mult)
     if atr_result is None:
         return None
 
@@ -356,7 +370,7 @@ def swing_high_breakout(candles, ema_values, investment_dollars):
         shares=shares,
         risk_per_share=round(rps, 2),
         total_risk=round(total_risk, 2),
-        notes="Breakout above a recent swing high while price is above the 8 EMA. Stop and target sized using ATR."
+        notes="Breakout above a recent swing high while price is above the 8 EMA. Stop and target sized using ATR; R-multiple adapts to volatility compression."
     )
 
 
@@ -393,8 +407,12 @@ def retest_breakout(candles, ema_values, investment_dollars):
     if abs(entry - current_price) / current_price > 0.05:
         return None
 
+    # Adaptive R: Retest uses 3R only on perfect pullbacks
+    pull = compute_pullback_quality(candles, ema_values)
+    r_mult = 3.0 if pull >= 3.0 else 2.0
+
     atr = compute_atr(candles)
-    atr_result = build_atr_stop_and_target(entry, atr)
+    atr_result = build_atr_stop_and_target(entry, atr, r_mult)
     if atr_result is None:
         return None
 
@@ -412,7 +430,7 @@ def retest_breakout(candles, ema_values, investment_dollars):
         shares=shares,
         risk_per_share=round(rps, 2),
         total_risk=round(total_risk, 2),
-        notes="Price pulled back to the 8 EMA and then bounced back above it. Stop and target sized using ATR."
+        notes="Price pulled back to the 8 EMA and then bounced back above it. Stop and target sized using ATR; R-multiple adapts to pullback quality."
     )
 
 
@@ -456,6 +474,7 @@ def get_strategy(
             detail="No valid strategy signals found for the given inputs.",
         )
 
+    # Scoring for recommendation
     trend = compute_trend_strength(ema_values)
     vol = compute_volatility_compression(candles)
     pull = compute_pullback_quality(candles, ema_values)
