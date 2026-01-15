@@ -570,6 +570,7 @@ def daily_scan(
 
     for idx, ticker in enumerate(SP100_TICKERS):
         ticker_upper = ticker.upper()
+        print(f"Processing {ticker_upper}")
         try:
             candles = fetch_eod_data(ticker_upper)
             closes = [c["close"] for c in candles]
@@ -627,7 +628,8 @@ def daily_scan(
 
         except HTTPException:
             continue
-        except Exception:
+        except Exception as e:
+            print(f"Error for {ticker_upper}: {e}")
             continue
 
         # Respect Alpha Vantage free tier: 5 calls per minute
