@@ -578,10 +578,12 @@ def scan_sp100(
             if not strategies:
                 continue
 
+            # compute context metrics once per ticker
             trend = compute_trend_strength(ema_values)
             vol = compute_volatility_compression(candles)
             pull = compute_pullback_quality(candles, ema_values)
 
+            # assign scores per strategy
             for s in strategies:
                 if s.strategy == "simple":
                     s.score = trend
@@ -590,13 +592,14 @@ def scan_sp100(
                 elif s.strategy == "retest":
                     s.score = trend + pull
 
+            # pick best strategy for this ticker
             best = max(strategies, key=lambda x: x.score)
 
             candidates.append(
                 ScanCandidate(
                     ticker=ticker,
                     best_strategy=best.strategy,
-                    best_score=round(best.score, 2),
+                    best_score=float(round(best.score, 2)),
                     has_simple=simple_res is not None,
                     has_swing=swing_res is not None,
                     has_retest=retest_res is not None,
@@ -614,7 +617,10 @@ def scan_sp100(
             detail="No valid strategy setups were found in the S&P 100 based on current market conditions.",
         )
 
+    # sort strictly by numeric score, highest first
     candidates.sort(key=lambda c: c.best_score, reverse=True)
+
+    # keep only top 10
     top_candidates = candidates[:10]
 
     return ScanResponse(candidates=top_candidates)
