@@ -604,10 +604,8 @@ def scan_sp100(
             )
 
         except HTTPException:
-            # Skip tickers that fail due to data issues
             continue
         except Exception:
-            # Fail-safe: skip any unexpected errors for a single ticker
             continue
 
     if not candidates:
@@ -616,10 +614,7 @@ def scan_sp100(
             detail="No valid strategy setups were found in the S&P 100 based on current market conditions.",
         )
 
-    # Sort by score descending
-candidates.sort(key=lambda c: c.best_score, reverse=True)
+    candidates.sort(key=lambda c: c.best_score, reverse=True)
+    top_candidates = candidates[:10]
 
-# Keep only the top 10
-top_candidates = candidates[:10]
-
-return ScanResponse(candidates=top_candidates)
+    return ScanResponse(candidates=top_candidates)
