@@ -44,6 +44,7 @@ class StrategyResult(BaseModel):
     shares: int
     risk_per_share: float
     total_risk: float
+    total_profit: float
     notes: str
     score: float = 0.0
     is_recommended: bool = False
@@ -237,7 +238,6 @@ def compute_pullback_quality(candles: List[dict], ema_values: List[float]) -> fl
 
 MAX_STOP_PCT = 0.10      # 10% max stop distance
 ATR_MULT_STOP = 1.5      # 1.5 * ATR for stop
-DEFAULT_R_MULT = 2.0     # base R multiple (2R)
 
 
 def build_atr_stop_and_target(entry: float, atr: float, r_mult: float) -> Optional[tuple]:
@@ -303,6 +303,8 @@ def simple_ema_breakout(candles, ema_values, investment_dollars):
     if shares <= 0:
         return None
 
+    total_profit = (take_profit - entry) * shares
+
     return StrategyResult(
         strategy="simple",
         entry=round(entry, 2),
@@ -311,6 +313,7 @@ def simple_ema_breakout(candles, ema_values, investment_dollars):
         shares=shares,
         risk_per_share=round(rps, 2),
         total_risk=round(total_risk, 2),
+        total_profit=round(total_profit, 2),
         notes="Price closed above the 8 EMA after being below it. Stop and target sized using ATR; R-multiple adapts to trend strength."
     )
 
@@ -362,6 +365,8 @@ def swing_high_breakout(candles, ema_values, investment_dollars):
     if shares <= 0:
         return None
 
+    total_profit = (take_profit - entry) * shares
+
     return StrategyResult(
         strategy="swing",
         entry=round(entry, 2),
@@ -370,6 +375,7 @@ def swing_high_breakout(candles, ema_values, investment_dollars):
         shares=shares,
         risk_per_share=round(rps, 2),
         total_risk=round(total_risk, 2),
+        total_profit=round(total_profit, 2),
         notes="Breakout above a recent swing high while price is above the 8 EMA. Stop and target sized using ATR; R-multiple adapts to volatility compression."
     )
 
@@ -422,6 +428,8 @@ def retest_breakout(candles, ema_values, investment_dollars):
     if shares <= 0:
         return None
 
+    total_profit = (take_profit - entry) * shares
+
     return StrategyResult(
         strategy="retest",
         entry=round(entry, 2),
@@ -430,6 +438,7 @@ def retest_breakout(candles, ema_values, investment_dollars):
         shares=shares,
         risk_per_share=round(rps, 2),
         total_risk=round(total_risk, 2),
+        total_profit=round(total_profit, 2),
         notes="Price pulled back to the 8 EMA and then bounced back above it. Stop and target sized using ATR; R-multiple adapts to pullback quality."
     )
 
@@ -474,7 +483,6 @@ def get_strategy(
             detail="No valid strategy signals found for the given inputs.",
         )
 
-    # Scoring for recommendation
     trend = compute_trend_strength(ema_values)
     vol = compute_volatility_compression(candles)
     pull = compute_pullback_quality(candles, ema_values)
