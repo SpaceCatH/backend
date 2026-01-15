@@ -224,7 +224,7 @@ MAX_STOP_PCT = 0.10      # 10% max stop distance
 ATR_MULT_STOP = 1.5      # 1.5 * ATR for stop
 
 
-def build_atr_stop_and_target(entry: float, atr: float, r_mult: float) -> Optional[tuple]:
+def build_atr_stop_and_target(entry: float, atr: Optional[float], r_mult: float) -> Optional[tuple]:
     if atr is None or atr <= 0 or entry <= 0:
         return None
 
@@ -238,7 +238,7 @@ def build_atr_stop_and_target(entry: float, atr: float, r_mult: float) -> Option
     stop_loss = entry - risk_per_share
     take_profit = entry + r_mult * risk_per_share
 
-    if stop_loss <= 0:
+    if stop_loss <= 0 or take_profit <= entry:
         return None
 
     return stop_loss, take_profit, risk_per_share
@@ -248,10 +248,12 @@ def build_atr_stop_and_target(entry: float, atr: float, r_mult: float) -> Option
 # Strategy implementations
 # -----------------------------
 
-def simple_ema_breakout(candles, ema_values, investment_dollars):
+def simple_ema_breakout(candles, ema_values, investment_dollars) -> Optional[StrategyResult]:
     closes = [c["close"] for c in candles]
-    LOOKBACK_LIMIT = 7
+    if len(closes) < 3 or len(ema_values) < 3:
+        return None
 
+    LOOKBACK_LIMIT = 7
     last_idx = len(closes) - 1
     start_idx = max(1, last_idx - LOOKBACK_LIMIT)
 
@@ -268,11 +270,12 @@ def simple_ema_breakout(candles, ema_values, investment_dollars):
 
     entry = closes[found_idx]
     current_price = closes[-1]
+    if entry <= 0:
+        return None
 
     if abs(entry - current_price) / current_price > 0.05:
         return None
 
-    # Adaptive R: Simple uses 3R in strong trends
     trend = compute_trend_strength(ema_values)
     r_mult = 3.0 if trend >= 2.0 else 2.0
 
@@ -283,13 +286,15 @@ def simple_ema_breakout(candles, ema_values, investment_dollars):
 
     stop_loss, take_profit, risk_per_share = atr_result
 
-    # Capital-based position sizing
     shares = floor(investment_dollars / entry)
     if shares <= 0:
         return None
 
     total_risk = shares * risk_per_share
     total_profit = shares * (take_profit - entry)
+
+    if total_risk <= 0 or total_profit <= 0:
+        return None
 
     return StrategyResult(
         strategy="simple",
@@ -304,10 +309,12 @@ def simple_ema_breakout(candles, ema_values, investment_dollars):
     )
 
 
-def swing_high_breakout(candles, ema_values, investment_dollars):
+def swing_high_breakout(candles, ema_values, investment_dollars) -> Optional[StrategyResult]:
     closes = [c["close"] for c in candles]
     highs = [c["high"] for c in candles]
-    lows = [c["low"] for c in candles]
+
+    if len(candles) < 5 or len(ema_values) < 5:
+        return None
 
     LOOKBACK_LIMIT = 10
     last_idx = len(candles) - 1
@@ -332,11 +339,12 @@ def swing_high_breakout(candles, ema_values, investment_dollars):
 
     entry = closes[last_idx]
     current_price = closes[-1]
+    if entry <= 0:
+        return None
 
     if abs(entry - current_price) / current_price > 0.05:
         return None
 
-    # Adaptive R: Swing uses 3R when volatility is compressed
     vol = compute_volatility_compression(candles)
     r_mult = 3.0 if vol >= 1.0 else 2.0
 
@@ -347,13 +355,15 @@ def swing_high_breakout(candles, ema_values, investment_dollars):
 
     stop_loss, take_profit, risk_per_share = atr_result
 
-    # Capital-based position sizing
     shares = floor(investment_dollars / entry)
     if shares <= 0:
         return None
 
     total_risk = shares * risk_per_share
     total_profit = shares * (take_profit - entry)
+
+    if total_risk <= 0 or total_profit <= 0:
+        return None
 
     return StrategyResult(
         strategy="swing",
@@ -368,10 +378,12 @@ def swing_high_breakout(candles, ema_values, investment_dollars):
     )
 
 
-def retest_breakout(candles, ema_values, investment_dollars):
+def retest_breakout(candles, ema_values, investment_dollars) -> Optional[StrategyResult]:
     closes = [c["close"] for c in candles]
-    LOOKBACK_LIMIT = 7
+    if len(closes) < 3 or len(ema_values) < 3:
+        return None
 
+    LOOKBACK_LIMIT = 7
     last_idx = len(closes) - 1
     start_idx = max(2, last_idx - LOOKBACK_LIMIT)
 
@@ -397,11 +409,12 @@ def retest_breakout(candles, ema_values, investment_dollars):
 
     entry = closes[found_idx]
     current_price = closes[-1]
+    if entry <= 0:
+        return None
 
     if abs(entry - current_price) / current_price > 0.05:
         return None
 
-    # Adaptive R: Retest uses 3R only on perfect pullbacks
     pull = compute_pullback_quality(candles, ema_values)
     r_mult = 3.0 if pull >= 3.0 else 2.0
 
@@ -412,13 +425,15 @@ def retest_breakout(candles, ema_values, investment_dollars):
 
     stop_loss, take_profit, risk_per_share = atr_result
 
-    # Capital-based position sizing
     shares = floor(investment_dollars / entry)
     if shares <= 0:
         return None
 
     total_risk = shares * risk_per_share
     total_profit = shares * (take_profit - entry)
+
+    if total_risk <= 0 or total_profit <= 0:
+        return None
 
     return StrategyResult(
         strategy="retest",
@@ -454,23 +469,23 @@ def get_strategy(
 
     if strategy_type in ("simple", "all"):
         res = simple_ema_breakout(candles, ema_values, dollars)
-        if res:
+        if res is not None:
             strategies.append(res)
 
     if strategy_type in ("swing", "all"):
         res = swing_high_breakout(candles, ema_values, dollars)
-        if res:
+        if res is not None:
             strategies.append(res)
 
     if strategy_type in ("retest", "all"):
         res = retest_breakout(candles, ema_values, dollars)
-        if res:
+        if res is not None:
             strategies.append(res)
 
     if not strategies:
         raise HTTPException(
             status_code=404,
-            detail="No valid strategy signals found for the given inputs.",
+            detail="No valid strategy setups were found for this ticker and allocation based on current market conditions.",
         )
 
     trend = compute_trend_strength(ema_values)
