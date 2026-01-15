@@ -19,10 +19,9 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Allow frontend (React) to call this API from another origin
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # you can restrict this later
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -59,14 +58,6 @@ class StrategyResponse(BaseModel):
 # -----------------------------
 
 def fetch_eod_data(ticker: str, limit: int = 120):
-    """
-    Fetch end-of-day data (daily candles) from Alpha Vantage.
-    Returns a list of candles sorted from oldest to newest:
-    [
-        {"date": "YYYY-MM-DD", "open": ..., "high": ..., "low": ..., "close": ...},
-        ...
-    ]
-    """
     url = "https://www.alphavantage.co/query"
     params = {
         "function": "TIME_SERIES_DAILY",
@@ -95,28 +86,21 @@ def fetch_eod_data(ticker: str, limit: int = 120):
             }
         )
 
-    # Sort by date ascending (oldest -> newest)
     candles.sort(key=lambda x: x["date"])
     return candles[-limit:]
 
 
 def calculate_ema(prices: List[float], period: int = 8) -> List[float]:
-    """
-    Calculate EMA for a list of closing prices.
-    Returns a list of EMA values of the same length as prices.
-    """
     if len(prices) < period:
         raise HTTPException(status_code=400, detail="Not enough data to calculate EMA")
 
     ema_values = []
     k = 2 / (period + 1)
 
-    # Start with simple average for the first EMA
     sma = sum(prices[:period]) / period
-    ema_values.extend([None] * (period - 1))  # padding for alignment
+    ema_values.extend([None] * (period - 1))
     ema_values.append(sma)
 
-    # Continue with EMA formula
     for price in prices[period:]:
         prev_ema = ema_values[-1]
         current_ema = (price - prev_ema) * k + prev_ema
@@ -125,15 +109,11 @@ def calculate_ema(prices: List[float], period: int = 8) -> List[float]:
     return ema_values
 
 
-def compute_position_size(investment_dollars: float, entry: float, stop_loss: float) -> (int, float, float):
-    """
-    Compute the number of shares based on a basic risk rule:
-    - Risk 1% of total investment per trade.
-    """
+def compute_position_size(investment_dollars: float, entry: float, stop_loss: float):
     if entry <= 0 or stop_loss <= 0:
         return 0, 0.0, 0.0
 
-    risk_per_trade = investment_dollars * 0.01  # 1% risk
+    risk_per_trade = investment_dollars * 0.01
     risk_per_share = abs(entry - stop_loss)
 
     if risk_per_share == 0:
@@ -146,40 +126,31 @@ def compute_position_size(investment_dollars: float, entry: float, stop_loss: fl
 
 
 # -----------------------------
-# Scoring helpers (for recommendation)
+# Scoring helpers
 # -----------------------------
 
 def compute_trend_strength(ema_values: List[float]) -> float:
-    """
-    Simple trend strength score based on EMA slope over the last 20 bars.
-    Returns a score between 0 and 3.
-    """
-    valid_ema = [e for e in ema_values if e is not None]
-    if len(valid_ema) < 20:
+    valid = [e for e in ema_values if e is not None]
+    if len(valid) < 20:
         return 0.0
 
-    start = valid_ema[-20]
-    end = valid_ema[-1]
+    start = valid[-20]
+    end = valid[-1]
     if start <= 0:
         return 0.0
 
-    pct_change = (end - start) / start
+    pct = (end - start) / start
 
-    if pct_change > 0.05:
+    if pct > 0.05:
         return 3.0
-    elif pct_change > 0.02:
+    elif pct > 0.02:
         return 2.0
-    elif pct_change > 0.005:
+    elif pct > 0.005:
         return 1.0
-    else:
-        return 0.0
+    return 0.0
 
 
 def compute_volatility_compression(candles: List[dict]) -> float:
-    """
-    Simple volatility compression score based on ATR vs its recent average.
-    Returns a score between 0 and 2.
-    """
     if len(candles) < 25:
         return 0.0
 
@@ -198,9 +169,9 @@ def compute_volatility_compression(candles: List[dict]) -> float:
     if len(trs) < 20:
         return 0.0
 
-    recent_trs = trs[-20:]
-    avg_atr = sum(recent_trs[:-1]) / (len(recent_trs) - 1)
-    current_atr = recent_trs[-1]
+    recent = trs[-20:]
+    avg_atr = sum(recent[:-1]) / (len(recent) - 1)
+    current_atr = recent[-1]
 
     if avg_atr == 0:
         return 0.0
@@ -211,54 +182,42 @@ def compute_volatility_compression(candles: List[dict]) -> float:
         return 2.0
     elif ratio < 1.0:
         return 1.0
-    else:
-        return 0.0
+    return 0.0
 
 
 def compute_pullback_quality(candles: List[dict], ema_values: List[float]) -> float:
-    """
-    Simple pullback quality score based on recent price action around the EMA.
-    Returns a score between 0 and 3.
-    """
     closes = [c["close"] for c in candles]
-    if len(closes) < 3 or len(ema_values) < 3:
-        return 0.0
-
     i = len(closes) - 1
+
     if ema_values[i] is None or ema_values[i - 1] is None or ema_values[i - 2] is None:
         return 0.0
 
     above_two_ago = closes[i - 2] > ema_values[i - 2]
-    near_or_below_prev = closes[i - 1] <= ema_values[i - 1] * 1.01
-    bounce_now = closes[i] > ema_values[i]
+    near_prev = closes[i - 1] <= ema_values[i - 1] * 1.01
+    bounce = closes[i] > ema_values[i]
 
-    if above_two_ago and near_or_below_prev and bounce_now:
+    if above_two_ago and near_prev and bounce:
         return 3.0
-    elif above_two_ago and bounce_now:
+    elif above_two_ago and bounce:
         return 2.0
-    elif bounce_now:
+    elif bounce:
         return 1.0
-    else:
-        return 0.0
+    return 0.0
 
 
 # -----------------------------
-# Strategy implementations
+# Strategy implementations (with fresh-signal logic)
 # -----------------------------
 
-def simple_ema_breakout(candles, ema_values, investment_dollars) -> Optional[StrategyResult]:
-    """
-    Simple EMA breakout:
-    - Entry: last close where price closes above the 8 EMA after being below.
-    - Stop: a bit below the EMA (using the last EMA value).
-    - Take profit: 2R (twice the risk).
-    """
-
+def simple_ema_breakout(candles, ema_values, investment_dollars):
     closes = [c["close"] for c in candles]
+    LOOKBACK_LIMIT = 7
 
-    # Find the most recent bar where close crosses above EMA
+    last_idx = len(closes) - 1
+    start_idx = max(1, last_idx - LOOKBACK_LIMIT)
+
     found_idx = None
-    for i in range(len(closes) - 1, 0, -1):
+    for i in range(last_idx, start_idx - 1, -1):
         if ema_values[i] is None or ema_values[i - 1] is None:
             continue
         if closes[i] > ema_values[i] and closes[i - 1] <= ema_values[i - 1]:
@@ -269,13 +228,17 @@ def simple_ema_breakout(candles, ema_values, investment_dollars) -> Optional[Str
         return None
 
     entry = closes[found_idx]
+    current_price = closes[-1]
+
+    if abs(entry - current_price) / current_price > 0.05:
+        return None
+
     ema_at_entry = ema_values[found_idx]
-    stop_loss = ema_at_entry * 0.99  # 1% below EMA as a simple buffer
+    stop_loss = ema_at_entry * 0.99
     risk_per_share = entry - stop_loss
     take_profit = entry + 2 * risk_per_share
 
     shares, rps, total_risk = compute_position_size(investment_dollars, entry, stop_loss)
-
     if shares <= 0:
         return None
 
@@ -291,24 +254,18 @@ def simple_ema_breakout(candles, ema_values, investment_dollars) -> Optional[Str
     )
 
 
-def swing_high_breakout(candles, ema_values, investment_dollars) -> Optional[StrategyResult]:
-    """
-    Swing-high breakout:
-    - Identify a recent swing high.
-    - Entry: breakout above that swing high while price is above EMA.
-    - Stop: below the swing low.
-    - Take profit: 1.5R.
-    """
-
+def swing_high_breakout(candles, ema_values, investment_dollars):
     closes = [c["close"] for c in candles]
     highs = [c["high"] for c in candles]
     lows = [c["low"] for c in candles]
 
-    # Define a simple swing high: high[i] > high[i-1] and high[i] > high[i+1]
+    LOOKBACK_LIMIT = 10
+    last_idx = len(candles) - 1
+    start_idx = max(3, last_idx - LOOKBACK_LIMIT)
+
     swing_high_idx = None
-    for i in range(len(highs) - 3, 2, -1):  # search backwards
+    for i in range(start_idx, 2, -1):
         if highs[i] > highs[i - 1] and highs[i] > highs[i + 1]:
-            # Ensure price is above EMA around this region
             if ema_values[i] is not None and closes[i] > ema_values[i]:
                 swing_high_idx = i
                 break
@@ -318,23 +275,25 @@ def swing_high_breakout(candles, ema_values, investment_dollars) -> Optional[Str
 
     swing_high = highs[swing_high_idx]
 
-    # Assume breakout happens at the last candle closing above the swing high
-    last_idx = len(candles) - 1
-    if closes[last_idx] <= swing_high or ema_values[last_idx] is None or closes[last_idx] <= ema_values[last_idx]:
+    if closes[last_idx] <= swing_high:
+        return None
+    if ema_values[last_idx] is None or closes[last_idx] <= ema_values[last_idx]:
         return None
 
     entry = closes[last_idx]
+    current_price = closes[-1]
 
-    # Simple swing low: minimum low over a small window before the swing high
+    if abs(entry - current_price) / current_price > 0.05:
+        return None
+
     window_start = max(0, swing_high_idx - 5)
     swing_low = min(lows[window_start:swing_high_idx + 1])
 
-    stop_loss = swing_low * 0.99  # small buffer below swing low
+    stop_loss = swing_low * 0.99
     risk_per_share = entry - stop_loss
     take_profit = entry + 1.5 * risk_per_share
 
     shares, rps, total_risk = compute_position_size(investment_dollars, entry, stop_loss)
-
     if shares <= 0:
         return None
 
@@ -350,33 +309,27 @@ def swing_high_breakout(candles, ema_values, investment_dollars) -> Optional[Str
     )
 
 
-def retest_breakout(candles, ema_values, investment_dollars) -> Optional[StrategyResult]:
-    """
-    Retest breakout:
-    - Price is above EMA.
-    - Pulls back to the EMA (or slightly below).
-    - Then closes back above EMA (bounce).
-    - Entry: on the bounce close.
-    - Stop: slightly below EMA.
-    - Take profit: 2R.
-    """
-
+def retest_breakout(candles, ema_values, investment_dollars):
     closes = [c["close"] for c in candles]
+    LOOKBACK_LIMIT = 7
+
+    last_idx = len(closes) - 1
+    start_idx = max(2, last_idx - LOOKBACK_LIMIT)
 
     found_idx = None
-    for i in range(len(closes) - 1, 1, -1):
-        if ema_values[i] is None or ema_values[i - 1] is None or ema_values[i - 2] is None:
+    for i in range(last_idx, start_idx - 1, -1):
+        if (
+            ema_values[i] is None
+            or ema_values[i - 1] is None
+            or ema_values[i - 2] is None
+        ):
             continue
 
-        # Condition:
-        # - 2 bars ago: clearly above EMA
-        # - 1 bar ago: close near or slightly below EMA (retest)
-        # - current bar: close back above EMA (bounce)
         above_two_ago = closes[i - 2] > ema_values[i - 2]
-        near_or_below_prev = closes[i - 1] <= ema_values[i - 1] * 1.01
-        bounce_now = closes[i] > ema_values[i]
+        near_prev = closes[i - 1] <= ema_values[i - 1] * 1.01
+        bounce = closes[i] > ema_values[i]
 
-        if above_two_ago and near_or_below_prev and bounce_now:
+        if above_two_ago and near_prev and bounce:
             found_idx = i
             break
 
@@ -384,13 +337,17 @@ def retest_breakout(candles, ema_values, investment_dollars) -> Optional[Strateg
         return None
 
     entry = closes[found_idx]
+    current_price = closes[-1]
+
+    if abs(entry - current_price) / current_price > 0.05:
+        return None
+
     ema_at_entry = ema_values[found_idx]
     stop_loss = ema_at_entry * 0.99
     risk_per_share = entry - stop_loss
     take_profit = entry + 2 * risk_per_share
 
     shares, rps, total_risk = compute_position_size(investment_dollars, entry, stop_loss)
-
     if shares <= 0:
         return None
 
@@ -412,14 +369,10 @@ def retest_breakout(candles, ema_values, investment_dollars) -> Optional[Strateg
 
 @app.get("/strategy", response_model=StrategyResponse)
 def get_strategy(
-    ticker: str = Query(..., description="Stock ticker symbol, e.g., AAPL"),
-    dollars: float = Query(..., gt=0, description="Investment amount in dollars"),
-    type: str = Query("simple", description="Strategy type: simple, swing, retest, or all"),
+    ticker: str = Query(...),
+    dollars: float = Query(..., gt=0),
+    type: str = Query("simple"),
 ):
-    """
-    Main endpoint to generate strategies.
-    """
-
     ticker_upper = ticker.upper()
     strategy_type = type.lower()
 
@@ -447,25 +400,22 @@ def get_strategy(
     if not strategies:
         raise HTTPException(
             status_code=404,
-            detail="No valid strategy signals found for the given inputs. Try another ticker or date range.",
+            detail="No valid strategy signals found for the given inputs.",
         )
 
-    # -----------------------------
-    # Recommendation logic
-    # -----------------------------
-    trend_score = compute_trend_strength(ema_values)
-    vol_score = compute_volatility_compression(candles)
-    pullback_score = compute_pullback_quality(candles, ema_values)
+    # Scoring
+    trend = compute_trend_strength(ema_values)
+    vol = compute_volatility_compression(candles)
+    pull = compute_pullback_quality(candles, ema_values)
 
     for s in strategies:
         if s.strategy == "simple":
-            s.score = trend_score
+            s.score = trend
         elif s.strategy == "swing":
-            s.score = trend_score + vol_score
+            s.score = trend + vol
         elif s.strategy == "retest":
-            s.score = trend_score + pullback_score
+            s.score = trend + pull
 
-    # Mark the highest-scoring strategy as recommended
     best = max(strategies, key=lambda x: x.score)
     for s in strategies:
         s.is_recommended = (s is best)
