@@ -15,8 +15,8 @@ load_dotenv()
 
 app = FastAPI(
     title="8 EMA Swing Trading Strategy API",
-    description="Generates entry/exit points for multiple EMA breakout strategies.",
-    version="1.0.0",
+    description="Generates entry/exit points for multiple EMA breakout strategies and scans the S&P 100.",
+    version="1.1.0",
 )
 
 app.add_middleware(
@@ -30,6 +30,24 @@ app.add_middleware(
 ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
 if not ALPHA_VANTAGE_API_KEY:
     raise RuntimeError("ALPHA_VANTAGE_API_KEY environment variable is not set.")
+
+
+# -----------------------------
+# S&P 100 universe (static)
+# -----------------------------
+
+SP100_TICKERS = [
+    "AAPL", "ABBV", "ABT", "ACN", "ADBE", "AIG", "AMGN", "AMT", "AMZN", "AVGO",
+    "AXP", "BA", "BAC", "BK", "BKNG", "BLK", "BMY", "BRK.B", "C", "CAT",
+    "CHTR", "CL", "CMCSA", "COF", "COP", "COST", "CRM", "CSCO", "CVS", "CVX",
+    "DHR", "DIS", "DOW", "DUK", "EMR", "EXC", "F", "FDX", "GD", "GE",
+    "GILD", "GM", "GOOG", "GOOGL", "GS", "HD", "HON", "IBM", "INTC", "JNJ",
+    "JPM", "KO", "LIN", "LLY", "LMT", "LOW", "MA", "MCD", "MDLZ", "MDT",
+    "MET", "META", "MMM", "MO", "MRK", "MS", "MSFT", "NEE", "NFLX", "NKE",
+    "NVDA", "ORCL", "PEP", "PFE", "PG", "PM", "PYPL", "QCOM", "RTX", "SBUX",
+    "SO", "SPG", "T", "TGT", "TMO", "TMUS", "TSLA", "TXN", "UNH", "UNP",
+    "UPS", "USB", "V", "VZ", "WBA", "WFC", "WMT", "XOM"
+]
 
 
 # -----------------------------
@@ -52,6 +70,19 @@ class StrategyResult(BaseModel):
 
 class StrategyResponse(BaseModel):
     strategies: List[StrategyResult]
+
+
+class ScanCandidate(BaseModel):
+    ticker: str
+    best_strategy: str
+    best_score: float
+    has_simple: bool
+    has_swing: bool
+    has_retest: bool
+
+
+class ScanResponse(BaseModel):
+    candidates: List[ScanCandidate]
 
 
 # -----------------------------
@@ -449,7 +480,7 @@ def retest_breakout(candles, ema_values, investment_dollars) -> Optional[Strateg
 
 
 # -----------------------------
-# API endpoint
+# Strategy endpoint
 # -----------------------------
 
 @app.get("/strategy", response_model=StrategyResponse)
@@ -505,3 +536,84 @@ def get_strategy(
         s.is_recommended = (s is best)
 
     return StrategyResponse(strategies=strategies)
+
+
+# -----------------------------
+# Scan endpoint (S&P 100)
+# -----------------------------
+
+@app.get("/scan", response_model=ScanResponse)
+def scan_sp100(
+    dollars: float = Query(10000, gt=0, description="Capital to hypothetically allocate per ticker for screening"),
+    type: str = Query("all", description="Strategy type to consider: simple, swing, retest, or all"),
+):
+    strategy_type = type.lower()
+    candidates: List[ScanCandidate] = []
+
+    for ticker in SP100_TICKERS:
+        try:
+            candles = fetch_eod_data(ticker)
+            closes = [c["close"] for c in candles]
+            ema_values = calculate_ema(closes, period=8)
+
+            strategies: List[StrategyResult] = []
+
+            simple_res = swing_res = retest_res = None
+
+            if strategy_type in ("simple", "all"):
+                simple_res = simple_ema_breakout(candles, ema_values, dollars)
+                if simple_res is not None:
+                    strategies.append(simple_res)
+
+            if strategy_type in ("swing", "all"):
+                swing_res = swing_high_breakout(candles, ema_values, dollars)
+                if swing_res is not None:
+                    strategies.append(swing_res)
+
+            if strategy_type in ("retest", "all"):
+                retest_res = retest_breakout(candles, ema_values, dollars)
+                if retest_res is not None:
+                    strategies.append(retest_res)
+
+            if not strategies:
+                continue
+
+            trend = compute_trend_strength(ema_values)
+            vol = compute_volatility_compression(candles)
+            pull = compute_pullback_quality(candles, ema_values)
+
+            for s in strategies:
+                if s.strategy == "simple":
+                    s.score = trend
+                elif s.strategy == "swing":
+                    s.score = trend + vol
+                elif s.strategy == "retest":
+                    s.score = trend + pull
+
+            best = max(strategies, key=lambda x: x.score)
+
+            candidates.append(
+                ScanCandidate(
+                    ticker=ticker,
+                    best_strategy=best.strategy,
+                    best_score=round(best.score, 2),
+                    has_simple=simple_res is not None,
+                    has_swing=swing_res is not None,
+                    has_retest=retest_res is not None,
+                )
+            )
+
+        except HTTPException:
+            # Skip tickers that fail due to data issues
+            continue
+        except Exception:
+            # Fail-safe: skip any unexpected errors for a single ticker
+            continue
+
+    if not candidates:
+        raise HTTPException(
+            status_code=404,
+            detail="No valid strategy setups were found in the S&P 100 based on current market conditions.",
+        )
+
+    return ScanResponse(candidates=candidates)
