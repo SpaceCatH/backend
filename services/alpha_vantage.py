@@ -10,16 +10,14 @@ if not ALPHA_VANTAGE_API_KEY:
 
 API_URL = "https://www.alphavantage.co/query"
 
-
 def fetch_eod_data(ticker: str, limit: int = 120):
     """
-    Fetches daily adjusted OHLC data from Alpha Vantage.
+    Fetches daily OHLC data from Alpha Vantage (free tier).
     Returns a list of candles sorted by date ascending.
-    Raises HTTPException on any invalid or rate-limited response.
     """
 
     params = {
-        "function": "TIME_SERIES_DAILY_ADJUSTED",
+        "function": "TIME_SERIES_DAILY",
         "symbol": ticker,
         "apikey": ALPHA_VANTAGE_API_KEY,
         "outputsize": "compact",
@@ -36,15 +34,12 @@ def fetch_eod_data(ticker: str, limit: int = 120):
     data = resp.json()
     print("ALPHA RAW:", data)
 
-    # Handle rate limit / invalid symbol / premium endpoint
+    # Handle rate limit / invalid symbol
     if "Note" in data:
         raise HTTPException(status_code=429, detail="Alpha Vantage rate limit reached")
 
     if "Error Message" in data:
         raise HTTPException(status_code=400, detail=f"Invalid symbol: {ticker}")
-
-    if "Information" in data:
-        raise HTTPException(status_code=400, detail=f"Alpha Vantage premium endpoint error for {ticker}")
 
     # Validate expected structure
     if "Time Series (Daily)" not in data:
@@ -65,7 +60,6 @@ def fetch_eod_data(ticker: str, limit: int = 120):
                 }
             )
         except Exception:
-            # Skip malformed rows instead of crashing
             continue
 
     if not candles:
