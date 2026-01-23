@@ -48,7 +48,7 @@ if not ALPHA_VANTAGE_API_KEY:
 def get_bucket():
     from google.cloud import storage
     client = storage.Client()
-    return client.bucket("detective-app-67ffd.appspot.com")
+    return client.bucket("detective-app-67ffd.firebasestorage.app")
 
 # -----------------------------
 # S&P 100 universe (static)
