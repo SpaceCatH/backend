@@ -8,11 +8,12 @@ def get_db():
     global _app, _db
 
     if _app is None:
-        # Cloud Run uses ADC automatically, so no key file needed
-        _app = firebase_admin.initialize_app()
+        # Force Firebase Admin SDK to use the Firestore project that actually contains your data
+        _app = firebase_admin.initialize_app(options={
+            "projectId": "detective-app-67ffd"
+        })
 
     if _db is None:
-        # Explicitly point to the Firestore project that actually contains your data
-        _db = firestore.client(project="detective-app-67ffd")
+        _db = firestore.client()   # No project arg here — project is set in initialize_app()
 
     return _db
