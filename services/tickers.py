@@ -28,7 +28,7 @@ def _get_bucket():
     Lazy-loads the GCS bucket client.
     """
     client = storage.Client()
-    return client.bucket("detective-app-67ffd.appspot.com")
+    return client.bucket("detective-app-67ffd.firebasestorage.app")
 
 
 def _load_tickers_from_gcs() -> Optional[list]:
