@@ -1,4 +1,4 @@
-from firebase_client import db
+from firebase_client import get_db
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -352,16 +352,140 @@ def get_strategy(
     return StrategyResponse(strategies=strategies)
 
 # -----------------------------
-# Daily scan endpoint
+# Daily scan endpoint (for Cloud Scheduler)
 # -----------------------------
 
-# (unchanged — your daily scan code goes here exactly as before)
+@app.post("/daily-scan")
+def daily_scan(
+    dollars: float = 10000,
+    type: str = "all",
+):
+    """
+    Runs the full S&P 100 scan, computes strategies, and writes one Firestore document per ticker.
+    Intended to be triggered once per day by Cloud Scheduler.
+    """
+    strategy_type = type.lower()
+
+    for idx, ticker in enumerate(SP100_TICKERS):
+        ticker_upper = ticker.upper()
+        print(f"Processing {ticker_upper}")
+        try:
+            candles = fetch_eod_data(ticker_upper)
+            closes = [c["close"] for c in candles]
+            ema_values = calculate_ema(closes, period=8)
+
+            strategies: List[StrategyResult] = []
+
+            simple_res = swing_res = retest_res = None
+
+            if strategy_type in ("simple", "all"):
+                simple_res = simple_ema_breakout(candles, ema_values, dollars)
+                if simple_res is not None:
+                    strategies.append(simple_res)
+
+            if strategy_type in ("swing", "all"):
+                swing_res = swing_high_breakout(candles, ema_values, dollars)
+                if swing_res is not None:
+                    strategies.append(swing_res)
+
+            if strategy_type in ("retest", "all"):
+                retest_res = retest_breakout(candles, ema_values, dollars)
+                if retest_res is not None:
+                    strategies.append(retest_res)
+
+            db = get_db()
+
+            if not strategies:
+                # If no valid strategies, remove any existing doc for this ticker
+                doc_id = normalize_ticker(ticker_upper)
+                db.collection("daily_scan").document(doc_id).delete()
+                continue
+
+            trend = compute_trend_strength(ema_values)
+            vol = compute_volatility_compression(candles)
+            pull = compute_pullback_quality(candles, ema_values)
+
+            for s in strategies:
+                if s.strategy == "simple":
+                    s.score = trend
+                elif s.strategy == "swing":
+                    s.score = trend + vol
+                elif s.strategy == "retest":
+                    s.score = trend + pull
+
+            best = max(strategies, key=lambda x: x.score)
+
+            doc_id = normalize_ticker(ticker_upper)
+            db.collection("daily_scan").document(doc_id).set({
+                "ticker": ticker_upper,  # original ticker (e.g., BRK.B)
+                "best_strategy": best.strategy,
+                "best_score": float(round(best.score, 2)),
+                "has_simple": simple_res is not None,
+                "has_swing": swing_res is not None,
+                "has_retest": retest_res is not None,
+                "updated_at": int(time.time()),
+            })
+
+        except HTTPException:
+            continue
+        except Exception as e:
+            print(f"Error for {ticker_upper}: {e}")
+            continue
+
+        # Respect Alpha Vantage free tier: 5 calls per minute
+        if (idx + 1) % 5 == 0 and (idx + 1) < len(SP100_TICKERS):
+            time.sleep(70)
+
+    return {"status": "completed"}
 
 # -----------------------------
-# Scan endpoint
+# Scan endpoint (reads from Firestore)
 # -----------------------------
 
-# (unchanged — your scan endpoint code goes here exactly as before)
+@app.get("/scan", response_model=ScanResponse)
+def scan_sp100():
+    """
+    Returns the most recent daily scan results from Firestore.
+    This is what the frontend should call for instant screener data.
+    """
+    db = get_db()
+    docs = db.collection("daily_scan").stream()
+
+    candidates: List[ScanCandidate] = []
+    for doc in docs:
+        data = doc.to_dict() or {}
+
+        ticker = data.get("ticker")
+        best_strategy = data.get("best_strategy")
+        best_score = data.get("best_score")
+        has_simple = data.get("has_simple")
+        has_swing = data.get("has_swing")
+        has_retest = data.get("has_retest")
+
+        if not ticker or best_strategy is None or best_score is None:
+            continue
+
+        candidates.append(
+            ScanCandidate(
+                ticker=ticker,
+                best_strategy=best_strategy,
+                best_score=float(best_score),
+                has_simple=bool(has_simple),
+                has_swing=bool(has_swing),
+                has_retest=bool(has_retest),
+            )
+        )
+
+    if not candidates:
+        raise HTTPException(
+            status_code=404,
+            detail="No cached scan results found in Firestore. Has /daily-scan run yet?",
+        )
+
+    candidates.sort(key=lambda c: c.best_score, reverse=True)
+    top_candidates = candidates[:10]
+
+    return ScanResponse(candidates=top_candidates)
 
 # -----------------------------
 # Tickers endpoint (fixed)
