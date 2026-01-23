@@ -12,6 +12,7 @@ def get_db():
         _app = firebase_admin.initialize_app()
 
     if _db is None:
-        _db = firestore.client()
+        # Explicitly point to the Firestore project that actually contains your data
+        _db = firestore.client(project="detective-app-67ffd")
 
     return _db
