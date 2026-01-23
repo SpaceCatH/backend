@@ -5,15 +5,27 @@ from pydantic import BaseModel
 import os
 import requests
 import time
+from google.cloud import storage
+import json
 from typing import List, Optional
 from math import floor
 from dotenv import load_dotenv
 
+
 load_dotenv()
+
+_ticker_cache = {
+    "data": None,
+    "timestamp": 0
+}
+
+CACHE_TTL = 60 * 60 * 24  # 24 hours
+
 
 # -----------------------------
 # FastAPI app setup
 # -----------------------------
+
 
 app = FastAPI(
     title="8 EMA Swing Trading Strategy API",
@@ -686,3 +698,25 @@ def scan_sp100():
     top_candidates = candidates[:10]
 
     return ScanResponse(candidates=top_candidates)
+
+@app.get("/tickers")
+def get_tickers():
+    global _ticker_cache
+
+    # Return cached version if fresh
+    if _ticker_cache["data"] and (time.time() - _ticker_cache["timestamp"] < CACHE_TTL):
+        return _ticker_cache["data"]
+
+    # Load from Cloud Storage
+    client = storage.Client()
+    bucket = client.bucket("detective-app-67ffd.appspot.com")
+    blob = bucket.blob("tickers/tickers.json")
+    content = blob.download_as_text()
+
+    data = json.loads(content)
+
+    # Update cache
+    _ticker_cache["data"] = data
+    _ticker_cache["timestamp"] = time.time()
+
+    return data
