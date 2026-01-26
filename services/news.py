@@ -41,7 +41,7 @@ async def fetch_recent_news(ticker: str):
                 source=item.get("source", ""),
                 date=date_part,
                 time=time_part,
-                url=item.get("url", "")
+                url=item.get("url", ""),
                 description=item.get("description", "")
             )
         )
