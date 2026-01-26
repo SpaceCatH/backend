@@ -70,7 +70,7 @@ SP100_TICKERS = [
 # -----------------------------
 
 @app.get("/strategy", response_model=StrategyResponse)
-def get_strategy(
+async def get_strategy(
     ticker: str = Query(...),
     dollars: float = Query(..., gt=0),
     type: str = Query("simple"),
