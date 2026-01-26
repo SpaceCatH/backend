@@ -23,6 +23,7 @@ class NewsItem(BaseModel):
     date: str
     time: str
     url: str
+    description: str = ""
 
 class StrategyResponse(BaseModel):
     strategies: List[StrategyResult]
