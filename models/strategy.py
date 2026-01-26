@@ -1,6 +1,6 @@
 # models/strategy.py
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List
 
 
@@ -27,4 +27,4 @@ class NewsItem(BaseModel):
 
 class StrategyResponse(BaseModel):
     strategies: List[StrategyResult]
-    recent_news: List[NewsItem] = []
+    recent_news: List[NewsItem] = Field(default_factory=list)
