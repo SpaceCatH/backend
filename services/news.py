@@ -7,7 +7,6 @@ from models.strategy import NewsItem
 FMP_API_KEY = os.getenv("FMP_API_KEY")
 
 async def fetch_recent_news(ticker: str):
-    print("NEWS FUNCTION STARTED")
     if not FMP_API_KEY:
         return []
 
@@ -15,18 +14,22 @@ async def fetch_recent_news(ticker: str):
         f"https://financialmodelingprep.com/api/v3/stock_news"
         f"?tickers={ticker}&limit=5&apikey={FMP_API_KEY}"
     )
-    
+
     async with httpx.AsyncClient() as client:
         r = await client.get(url)
         data = r.json()
 
-    print("FMP RAW:", data)
     
+    if not isinstance(data, list):
+        return []
+
     news_items = []
     for item in data:
-        published = item.get("publishedDate", "")  # "2024-01-25 14:32:00"
+        if not isinstance(item, dict):
+            continue  # skip strings or malformed entries
 
-        # Split into date + time
+        published = item.get("publishedDate", "")
+
         if " " in published:
             date_part, time_part = published.split(" ", 1)
         else:
