@@ -76,7 +76,6 @@ async def get_strategy(
     type: str = Query("simple"),
 ):
 
-    print("STRATEGY REQUEST:", ticker, time.time())
     print("STRATEGY REQUEST STARTED")
 
     ticker_upper = ticker.upper()
@@ -124,6 +123,8 @@ async def get_strategy(
     best = max(strategies, key=lambda x: x.score)
     for s in strategies:
         s.is_recommended = (s is best)
+
+    recent_news = await fetch_recent_news(ticker_upper)
 
     return StrategyResponse(strategies=strategies,recent_news=recent_news)
 
