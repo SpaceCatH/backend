@@ -124,7 +124,10 @@ async def get_strategy(
     for s in strategies:
         s.is_recommended = (s is best)
 
+    print("ABOUT TO FETCH NEWS")
     recent_news = await fetch_recent_news(ticker_upper)
+    print("NEWS FETCH COMPLETE")
+
 
     return StrategyResponse(strategies=strategies,recent_news=recent_news)
 
