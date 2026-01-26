@@ -46,5 +46,7 @@ async def fetch_recent_news(ticker: str):
             )
         )
 
+    print("NEWS ITEMS OUT:", [n.dict() for n in news_items])
+
     return news_items
     
