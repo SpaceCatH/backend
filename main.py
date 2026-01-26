@@ -28,6 +28,7 @@ from utils.atr import (
     compute_volatility_compression,
     compute_pullback_quality,
 )
+from services.news import fetch_recent_news
 
 # -----------------------------
 # FastAPI app setup
@@ -120,7 +121,7 @@ def get_strategy(
     for s in strategies:
         s.is_recommended = (s is best)
 
-    return StrategyResponse(strategies=strategies)
+    return StrategyResponse(strategies=strategies,recent_news=recent_news)
 
 # -----------------------------
 # Daily scan endpoint (for Cloud Scheduler)
