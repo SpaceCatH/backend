@@ -75,6 +75,9 @@ async def get_strategy(
     dollars: float = Query(..., gt=0),
     type: str = Query("simple"),
 ):
+
+    print("STRATEGY REQUEST:", ticker, time.time())
+
     ticker_upper = ticker.upper()
     strategy_type = type.lower()
 
