@@ -11,8 +11,8 @@ async def fetch_recent_news(ticker: str):
         return []
 
     url = (
-        f"https://financialmodelingprep.com/api/v3/stock_news"
-        f"?tickers={ticker}&limit=5&apikey={FMP_API_KEY}"
+    f"https://financialmodelingprep.com/api/v4/news"
+    f"?tickers={ticker}&limit=5&apikey={FMP_API_KEY}"
     )
 
     async with httpx.AsyncClient() as client:
