@@ -7,6 +7,7 @@ from models.strategy import NewsItem
 FMP_API_KEY = os.getenv("FMP_API_KEY")
 
 async def fetch_recent_news(ticker: str):
+    print("NEWS FUNCTION STARTED")
     if not FMP_API_KEY:
         return []
 
