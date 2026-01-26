@@ -120,6 +120,23 @@ async def get_strategy(
         elif s.strategy == "retest":
             s.score = trend + pull
 
+        # --- UPSIDE POTENTIAL (MODULAR ADD-ON) ---
+        # R-multiple: reward / risk
+        risk = s.entry - s.stop_loss
+        reward = s.take_profit - s.entry
+
+        if risk > 0:
+            r_multiple = reward / risk
+        else:
+            r_multiple = 0
+
+        # Normalize upside: cap between 0 and 3
+        upside_score = max(0, min(r_multiple, 3))
+
+        # Apply a light weight so upside never dominates
+        s.score = s.score + (0.3 * upside_score)
+        # --- END UPSIDE MODULE ---
+
     best = max(strategies, key=lambda x: x.score)
     for s in strategies:
         s.is_recommended = (s is best)
@@ -191,6 +208,24 @@ def daily_scan(
                 elif s.strategy == "retest":
                     s.score = trend + pull
 
+            
+            # --- UPSIDE POTENTIAL (MODULAR ADD-ON) ---
+            # R-multiple: reward / risk
+            risk = s.entry - s.stop_loss
+            reward = s.take_profit - s.entry
+
+            if risk > 0:
+                r_multiple = reward / risk
+            else:
+                r_multiple = 0
+
+            # Normalize upside: cap between 0 and 3
+            upside_score = max(0, min(r_multiple, 3))
+
+            # Apply a light weight so upside never dominates
+            s.score = s.score + (0.3 * upside_score)
+            # --- END UPSIDE MODULE ---
+    
             best = max(strategies, key=lambda x: x.score)
 
             write_daily_scan_result(
