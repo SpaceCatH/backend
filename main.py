@@ -77,6 +77,7 @@ async def get_strategy(
 ):
 
     print("STRATEGY REQUEST:", ticker, time.time())
+    print("STRATEGY REQUEST STARTED")
 
     ticker_upper = ticker.upper()
     strategy_type = type.lower()
