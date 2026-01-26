@@ -4,12 +4,10 @@ import os
 import httpx
 from models.strategy import NewsItem
 
-# Load your FMP API key from environment variables
 FMP_API_KEY = os.getenv("FMP_API_KEY")
 
 async def fetch_recent_news(ticker: str):
     if not FMP_API_KEY:
-        # Graceful fallback if key is missing
         return []
 
     url = (
@@ -23,13 +21,23 @@ async def fetch_recent_news(ticker: str):
 
     news_items = []
     for item in data:
+        published = item.get("publishedDate", "")  # "2024-01-25 14:32:00"
+
+        # Split into date + time
+        if " " in published:
+            date_part, time_part = published.split(" ", 1)
+        else:
+            date_part, time_part = published, ""
+
         news_items.append(
             NewsItem(
                 title=item.get("title", ""),
                 source=item.get("site", ""),
-                published_at=item.get("publishedDate", ""),
+                date=date_part,
+                time=time_part,
                 url=item.get("url", "")
             )
         )
 
     return news_items
+    
