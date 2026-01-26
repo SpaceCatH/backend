@@ -17,6 +17,13 @@ class StrategyResult(BaseModel):
     score: float = 0.0
     is_recommended: bool = False
 
+class NewsItem(BaseModel):
+    title: str
+    source: str
+    date: str
+    time: str
+    url: str
 
 class StrategyResponse(BaseModel):
     strategies: List[StrategyResult]
+    recent_news: List[NewsItem] = []
