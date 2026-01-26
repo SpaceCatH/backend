@@ -4,15 +4,19 @@ import os
 import httpx
 from models.strategy import NewsItem
 
-FMP_API_KEY = os.getenv("FMP_API_KEY")
+MARKETAUX_API_KEY = os.getenv("MARKETAUX_API_KEY")
 
 async def fetch_recent_news(ticker: str):
-    if not FMP_API_KEY:
+    if not MARKETAUX_API_KEY:
         return []
 
     url = (
-    f"https://financialmodelingprep.com/api/v4/news"
-    f"?tickers={ticker}&limit=5&apikey={FMP_API_KEY}"
+    "https://api.marketaux.com/v1/news/all"
+    f"?symbols={ticker}"
+    "&filter_entities=true"
+    "&language=en"
+    "&limit=5"
+    f"&api_token={MARKETAUX_API_KEY}"
     )
 
     async with httpx.AsyncClient() as client:
