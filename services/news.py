@@ -14,11 +14,13 @@ async def fetch_recent_news(ticker: str):
         f"https://financialmodelingprep.com/api/v3/stock_news"
         f"?tickers={ticker}&limit=5&apikey={FMP_API_KEY}"
     )
-
+    
     async with httpx.AsyncClient() as client:
         r = await client.get(url)
         data = r.json()
 
+    print("FMP RAW:", data)
+    
     news_items = []
     for item in data:
         published = item.get("publishedDate", "")  # "2024-01-25 14:32:00"
