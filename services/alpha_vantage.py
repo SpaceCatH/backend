@@ -10,6 +10,7 @@ if not ALPHA_VANTAGE_API_KEY:
 
 API_URL = "https://www.alphavantage.co/query"
 
+
 def fetch_eod_data(ticker: str, limit: int = 120):
     """
     Fetches daily OHLC data from Alpha Vantage (free tier).
@@ -50,7 +51,10 @@ def fetch_eod_data(ticker: str, limit: int = 120):
 
     # Missing or empty time series
     if "Time Series (Daily)" not in data or not data["Time Series (Daily)"]:
-        raise HTTPException(status_code=400, detail=f"Alpha Vantage returned no daily data for {ticker}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Alpha Vantage returned no daily data for {ticker}",
+        )
 
     ts = data["Time Series (Daily)"]
 
