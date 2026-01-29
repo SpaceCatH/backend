@@ -34,18 +34,25 @@ def fetch_eod_data(ticker: str, limit: int = 120):
     data = resp.json()
     print("ALPHA RAW:", data)
 
-    # Handle rate limit / invalid symbol
-    if "Note" in data:
-        raise HTTPException(status_code=429, detail="Alpha Vantage rate limit reached")
+    # --- Pass through Alpha Vantage messages verbatim ---
 
-    if "Error Message" in data:
-        raise HTTPException(status_code=400, detail=f"Invalid symbol: {ticker}")
+# Rate limit or general API notice
+if "Note" in data:
+    raise HTTPException(status_code=429, detail=data["Note"])
 
-    # Validate expected structure
-    if "Time Series (Daily)" not in data:
-        raise HTTPException(status_code=400, detail=f"Could not get EOD data for {ticker}")
+# Premium endpoint or temporary outage message
+if "Information" in data:
+    raise HTTPException(status_code=429, detail=data["Information"])
 
-    ts = data["Time Series (Daily)"]
+# Invalid symbol or malformed request
+if "Error Message" in data:
+    raise HTTPException(status_code=400, detail=data["Error Message"])
+
+# Missing or empty time series
+if "Time Series (Daily)" not in data or not data["Time Series (Daily)"]:
+    raise HTTPException(status_code=400, detail=f"Alpha Vantage returned no daily data for {ticker}")
+
+ts = data["Time Series (Daily)"]
 
     candles = []
     for date_str, values in ts.items():
