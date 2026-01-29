@@ -36,23 +36,23 @@ def fetch_eod_data(ticker: str, limit: int = 120):
 
     # --- Pass through Alpha Vantage messages verbatim ---
 
-# Rate limit or general API notice
-if "Note" in data:
-    raise HTTPException(status_code=429, detail=data["Note"])
+    # Rate limit or general API notice
+    if "Note" in data:
+        raise HTTPException(status_code=429, detail=data["Note"])
 
-# Premium endpoint or temporary outage message
-if "Information" in data:
-    raise HTTPException(status_code=429, detail=data["Information"])
+    # Premium endpoint or temporary outage message
+    if "Information" in data:
+        raise HTTPException(status_code=429, detail=data["Information"])
 
-# Invalid symbol or malformed request
-if "Error Message" in data:
-    raise HTTPException(status_code=400, detail=data["Error Message"])
+    # Invalid symbol or malformed request
+    if "Error Message" in data:
+        raise HTTPException(status_code=400, detail=data["Error Message"])
 
-# Missing or empty time series
-if "Time Series (Daily)" not in data or not data["Time Series (Daily)"]:
-    raise HTTPException(status_code=400, detail=f"Alpha Vantage returned no daily data for {ticker}")
+    # Missing or empty time series
+    if "Time Series (Daily)" not in data or not data["Time Series (Daily)"]:
+        raise HTTPException(status_code=400, detail=f"Alpha Vantage returned no daily data for {ticker}")
 
-ts = data["Time Series (Daily)"]
+    ts = data["Time Series (Daily)"]
 
     candles = []
     for date_str, values in ts.items():
